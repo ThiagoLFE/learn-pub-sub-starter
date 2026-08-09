@@ -32,7 +32,10 @@ func main() {
 	}
 
 	firstMove := routing.PlayingState{IsPaused: true}
-	pubsub.PublishJSON(channel, routing.ExchangePerilDirect, routing.PauseKey, firstMove)
+	if err := pubsub.PublishJSON(channel, routing.ExchangePerilDirect, routing.PauseKey, firstMove); err != nil {
+		log.Error("Failed to publish move", "Error", err)
+		os.Exit(1)
+	}
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt)
