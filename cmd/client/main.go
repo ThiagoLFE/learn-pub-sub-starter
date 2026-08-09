@@ -2,11 +2,7 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
-	"strings"
-
-	log "log/slog"
+	"log"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -15,32 +11,64 @@ import (
 )
 
 func main() {
-	const amqpServerUrl = "amqp://guest:guest@localhost:5672/"
 	fmt.Println("Starting Peril client...")
+	const rabbitConnString = "amqp://guest:guest@localhost:5672/"
 
-	conn, err := amqp.Dial(amqpServerUrl)
+	conn, err := amqp.Dial(rabbitConnString)
 	if err != nil {
-		log.Error("Failed to connect to the rabbitMQ", "error", err)
-		os.Exit(1)
+		log.Fatalf("could not connect to RabbitMQ: %v", err)
 	}
+	defer conn.Close()
+	fmt.Println("Peril game client connected to RabbitMQ!")
 
 	username, err := gamelogic.ClientWelcome()
 	if err != nil {
-		log.Error("Failed to register", "error", err)
-		os.Exit(1)
+		log.Fatalf("could not get username: %v", err)
 	}
 
-	queueName := strings.Join([]string{routing.PauseKey, username}, ".")
-
-	_, _, err = pubsub.DeclareAndBind(conn, routing.ExchangePerilDirect, routing.PauseKey, queueName, pubsub.Transient)
+	_, queue, err := pubsub.DeclareAndBind(
+		conn,
+		routing.ExchangePerilDirect,
+		routing.PauseKey+"."+username,
+		routing.PauseKey,
+		pubsub.Transient,
+	)
 	if err != nil {
-		log.Error("Failed on create/bind queue", "error", err)
-		os.Exit(1)
+		log.Fatalf("could not subscribe to pause: %v", err)
 	}
+	fmt.Printf("Queue %v declared and bound!\n", queue.Name)
 
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt)
-	<-sigs
+	gs := gamelogic.NewGameState(username)
 
-	fmt.Println("\nShutting down...")
+	for {
+		words := gamelogic.GetInput()
+		if len(words) == 0 {
+			continue
+		}
+		switch words[0] {
+		case "move":
+			_, err := gs.CommandMove(words)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+		case "spawn":
+			err = gs.CommandSpawn(words)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+		case "status":
+			gs.CommandStatus()
+		case "help":
+			gamelogic.PrintClientHelp()
+		case "spam":
+			fmt.Println("Spamming not allowed yet!")
+		case "quit":
+			gamelogic.PrintQuit()
+			return
+		default:
+			fmt.Println("unknown command")
+		}
+	}
 }
