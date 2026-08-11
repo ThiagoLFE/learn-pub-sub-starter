@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -28,14 +29,32 @@ func main() {
 
 	gs := gamelogic.NewGameState(username)
 
+	publishCh, err := conn.Channel()
+	if err != nil {
+		fmt.Printf("Failed to create the publish Channel: %v", err)
+		return
+	}
+
+	// subscribing on the pause/resume routing key
 	err = pubsub.SubscribeJSON(
 		conn,
 		routing.ExchangePerilDirect,
-		routing.PauseKey+"."+username,
+		strings.Join([]string{routing.PauseKey, username}, ","),
 		routing.PauseKey,
 		pubsub.Transient,
 		handlerPause(gs),
 	)
+
+	moveKeyPlusUser := strings.Join([]string{routing.ArmyMovesPrefix, username}, ".")
+	err = pubsub.SubscribeJSON(
+		conn,
+		routing.ExchangePerilTopic,
+		moveKeyPlusUser,
+		routing.ArmyMovesPrefix+".*",
+		pubsub.Transient,
+		handleMove(gs),
+	)
+
 	if err != nil {
 		log.Fatalf("could not subscribe to pause: %v", err)
 	}
@@ -47,11 +66,23 @@ func main() {
 		}
 		switch words[0] {
 		case "move":
-			_, err := gs.CommandMove(words)
+			newArmyMoviment, err := gs.CommandMove(words)
 			if err != nil {
 				fmt.Println(err)
 				continue
 			}
+
+			if err := pubsub.PublishJSON(
+				publishCh,
+				routing.ExchangePerilTopic,
+				moveKeyPlusUser,
+				newArmyMoviment,
+			); err != nil {
+				fmt.Printf("Failed to publish the move event: %v\n", err)
+				return
+			}
+			fmt.Println("Moviment published successfully!")
+
 		case "spawn":
 			err = gs.CommandSpawn(words)
 			if err != nil {
@@ -77,5 +108,12 @@ func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
 	return func(gamestate routing.PlayingState) {
 		defer fmt.Print("> ")
 		gs.HandlePause(gamestate)
+	}
+}
+
+func handleMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) {
+	return func(armyState gamelogic.ArmyMove) {
+		defer fmt.Print("> ")
+		gs.HandleMove(armyState)
 	}
 }
