@@ -47,10 +47,8 @@ func SubscribeJSON[T any](
 					fmt.Printf("Unexpected error to send Ack back: %v", err)
 					return
 				}
-				fmt.Println("Ack sended back to the server")
 			case NackRequeue:
 				if err := event.Nack(false, true); err != nil {
-					fmt.Printf("Unexpected error to send Ack Requeue back: %v", err)
 					return
 				}
 				fmt.Println("Ack Requeue sended back to the server")
@@ -59,12 +57,6 @@ func SubscribeJSON[T any](
 					fmt.Printf("Unexpected error to send Ack Discard back: %v", err)
 					return
 				}
-				fmt.Println("Ack Discard sended back to the server")
-			}
-
-			if err := event.Ack(false); err != nil {
-				fmt.Printf("failed to send knowledgment ACK: %v\n", err)
-				return
 			}
 		}
 	}()

@@ -45,6 +45,7 @@ func main() {
 		handlerPause(gs),
 	)
 
+	// subscribing at the army moves
 	moveKeyPlusUser := strings.Join([]string{routing.ArmyMovesPrefix, username}, ".")
 	err = pubsub.SubscribeJSON(
 		conn,
@@ -52,7 +53,20 @@ func main() {
 		moveKeyPlusUser,
 		routing.ArmyMovesPrefix+".*",
 		pubsub.Transient,
-		handleMove(gs),
+		handleMove(gs, publishCh),
+	)
+	if err != nil {
+		log.Fatalf("could not subscribe to pause: %v", err)
+	}
+
+	// subscribing at the war handler
+	err = pubsub.SubscribeJSON(
+		conn,
+		routing.ExchangePerilTopic,
+		"war",
+		routing.WarRecognitionsPrefix+".*",
+		pubsub.Durable,
+		handleConsumeAllWarMessages(gs),
 	)
 
 	if err != nil {
@@ -112,13 +126,53 @@ func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) pubsub.Ack
 	}
 }
 
-func handleMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) pubsub.Acktype {
+func handleMove(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.ArmyMove) pubsub.Acktype {
 	return func(armyState gamelogic.ArmyMove) pubsub.Acktype {
 		defer fmt.Print("> ")
 		move := gs.HandleMove(armyState)
-		if move == gamelogic.MoveOutComeSafe || move == gamelogic.MoveOutcomeMakeWar {
+		if move == gamelogic.MoveOutcomeMakeWar {
+			if err := pubsub.PublishJSON(
+				ch,
+				routing.ExchangePerilTopic,
+				routing.WarRecognitionsPrefix+"."+gs.GetUsername(),
+				gamelogic.RecognitionOfWar{
+					Attacker: armyState.Player,
+					Defender: gs.GetPlayerSnap(),
+				}); err != nil {
+				fmt.Printf("Failed to publish new war")
+			}
+			return pubsub.NackRequeue
+		}
+		if move == gamelogic.MoveOutComeSafe || move == gamelogic.MoveOutcomeSamePlayer {
+
 			return pubsub.Ack
 		}
+		return pubsub.NackDiscard
+	}
+}
+
+func handleConsumeAllWarMessages(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.Acktype {
+	return func(warMsg gamelogic.RecognitionOfWar) pubsub.Acktype {
+		defer fmt.Print("> ")
+		outcome, _, _ := gs.HandleWar(warMsg)
+
+		if outcome == gamelogic.WarOutcomeNotInvolved {
+			return pubsub.NackRequeue
+		}
+		if outcome == gamelogic.WarOutcomeNoUnits {
+			return pubsub.NackDiscard
+		}
+		if outcome == gamelogic.WarOutcomeOpponentWon {
+			return pubsub.Ack
+		}
+		if outcome == gamelogic.WarOutcomeYouWon {
+			return pubsub.Ack
+		}
+		if outcome == gamelogic.WarOutcomeDraw {
+			return pubsub.Ack
+		}
+		fmt.Printf("Error to handle the message: %v", warMsg)
+
 		return pubsub.NackDiscard
 	}
 }
