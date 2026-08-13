@@ -66,7 +66,7 @@ func main() {
 		"war",
 		routing.WarRecognitionsPrefix+".*",
 		pubsub.Durable,
-		handleConsumeAllWarMessages(gs),
+		handleConsumeAllWarMessages(gs, publishCh),
 	)
 
 	if err != nil {
@@ -139,22 +139,19 @@ func handleMove(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.ArmyMo
 					Attacker: armyState.Player,
 					Defender: gs.GetPlayerSnap(),
 				}); err != nil {
-				fmt.Printf("Failed to publish new war")
+				return pubsub.NackRequeue
 			}
-			return pubsub.NackRequeue
-		}
-		if move == gamelogic.MoveOutComeSafe || move == gamelogic.MoveOutcomeSamePlayer {
-
 			return pubsub.Ack
 		}
-		return pubsub.NackDiscard
+		return pubsub.Ack
 	}
 }
 
-func handleConsumeAllWarMessages(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.Acktype {
+func handleConsumeAllWarMessages(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.RecognitionOfWar) pubsub.Acktype {
 	return func(warMsg gamelogic.RecognitionOfWar) pubsub.Acktype {
 		defer fmt.Print("> ")
-		outcome, _, _ := gs.HandleWar(warMsg)
+		outcome, winner, looser := gs.HandleWar(warMsg)
+		playerName := gs.GetUsername()
 
 		if outcome == gamelogic.WarOutcomeNotInvolved {
 			return pubsub.NackRequeue
@@ -163,9 +160,15 @@ func handleConsumeAllWarMessages(gs *gamelogic.GameState) func(gamelogic.Recogni
 			return pubsub.NackDiscard
 		}
 		if outcome == gamelogic.WarOutcomeOpponentWon {
+			if err := logWar(ch, outcome, playerName, winner, looser); err != nil {
+				return pubsub.NackRequeue
+			}
 			return pubsub.Ack
 		}
 		if outcome == gamelogic.WarOutcomeYouWon {
+			if err := logWar(ch, outcome, playerName, winner, looser); err != nil {
+				return pubsub.NackRequeue
+			}
 			return pubsub.Ack
 		}
 		if outcome == gamelogic.WarOutcomeDraw {
@@ -175,4 +178,21 @@ func handleConsumeAllWarMessages(gs *gamelogic.GameState) func(gamelogic.Recogni
 
 		return pubsub.NackDiscard
 	}
+}
+
+func logWar(ch *amqp.Channel, outcome gamelogic.WarOutcome, player, winner, looser string) error {
+
+	switch outcome {
+	case gamelogic.WarOutcomeNotInvolved, gamelogic.WarOutcomeNoUnits:
+		return nil
+
+	case gamelogic.WarOutcomeYouWon, gamelogic.WarOutcomeOpponentWon:
+		msg := fmt.Sprintf("%s won a war against %s\n", winner, looser)
+		return pubsub.PublishGameLog(ch, player, msg)
+
+	case gamelogic.WarOutcomeDraw:
+		msg := fmt.Sprintf("A war between %s and %s resulted in a draw\n", winner, looser)
+		return pubsub.PublishGameLog(ch, player, msg)
+	}
+	return nil
 }
