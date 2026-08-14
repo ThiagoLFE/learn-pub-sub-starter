@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -21,9 +22,15 @@ func main() {
 	fmt.Println("Peril game server connected to RabbitMQ!")
 
 	key := fmt.Sprintf("%s.*", routing.GameLogSlug)
-	publishCh, _, err := pubsub.DeclareAndBind(conn, routing.ExchangePerilTopic, key, routing.GameLogSlug, pubsub.Durable)
+	publishCh, err := conn.Channel()
 	if err != nil {
-		log.Fatalf("could not declare/bind to the exchange/queue: %v", err)
+
+		fmt.Printf("Failed to create a channel to comunicate with rabbitMQ: %v", err)
+		os.Exit(1)
+	}
+	err = pubsub.SubscribeGob(conn, routing.ExchangePerilTopic, routing.GameLogSlug, key, pubsub.Durable, handlerLogs())
+	if err != nil {
+		log.Fatalf("subscribe to the logs queue: %v", err)
 	}
 
 	gamelogic.PrintServerHelp()
@@ -68,5 +75,17 @@ func main() {
 		default:
 			fmt.Println("unknown command")
 		}
+	}
+}
+
+func handlerLogs() func(routing.GameLog) pubsub.Acktype {
+	return func(log routing.GameLog) pubsub.Acktype {
+		defer fmt.Print("> ")
+
+		if err := gamelogic.WriteLog(log); err != nil {
+			fmt.Printf("error writing log: %v\n", err)
+			return pubsub.NackRequeue
+		}
+		return pubsub.Ack
 	}
 }

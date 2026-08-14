@@ -172,6 +172,9 @@ func handleConsumeAllWarMessages(gs *gamelogic.GameState, ch *amqp.Channel) func
 			return pubsub.Ack
 		}
 		if outcome == gamelogic.WarOutcomeDraw {
+			if err := logWar(ch, outcome, playerName, winner, looser); err != nil {
+				return pubsub.NackRequeue
+			}
 			return pubsub.Ack
 		}
 		fmt.Printf("Error to handle the message: %v", warMsg)
