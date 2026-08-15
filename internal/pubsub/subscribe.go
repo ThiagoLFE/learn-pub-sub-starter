@@ -77,6 +77,9 @@ func SubscribeGob[T any](
 	if err != nil {
 		return err
 	}
+	if err := subscribeCh.Qos(10, 0, false); err != nil {
+		return fmt.Errorf("Failed to config prefetch: %v", err)
+	}
 	receiver, err := subscribeCh.Consume(queueName, "", false, false, false, false, nil)
 	if err != nil {
 		return fmt.Errorf("Failed to consume queue: %w", err)
